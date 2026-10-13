@@ -1,15 +1,15 @@
-import {inspectXiangqi,colorOf,moveLabel} from './xiangqi.mjs';
+import {colorOf} from './xiangqi.mjs';
+import {types,typeOf,movingType,variantState,moveText} from './game-types.mjs';
+import {drawVariant,ownerAt} from './variant-board.mjs';
 import {drawXiangqi} from './xiangqi-board.mjs';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const coord=(x,y)=>`${String.fromCharCode(65+x)}${15-y}`;
 const effortLabels={default:'模型默认',none:'不思考',minimal:'极低',low:'低 · 更快响应',medium:'中 · 均衡',high:'高 · 更深入',xhigh:'很高',max:'最高',ultra:'超高 · 可能自动委派'};
 let state,game=null,working=false,replay=null,suggestion=null,models=[],view='play',selectedSquare=null;
-const typeOf=g=>g?.gameType||'gomoku';
 const currentType=()=>game?typeOf(game):$('modeSelect').value||state?.settings.gameType||'gomoku';
-const typeName=g=>typeOf(g)==='xiangqi'?'中国象棋':'五子棋';
-const moveText=(g,m)=>typeOf(g)==='xiangqi'?moveLabel(m):coord(m.x,m.y);
-function colorLabels(){const xq=currentType()==='xiangqi';$('firstColor').textContent=xq?'红方 · 先手':'黑棋 · 先手';$('secondColor').textContent=xq?'黑方 · 后手':'白棋 · 后手';}
+const typeName=g=>types[typeOf(g)].name;
+function colorLabels(){const colors=types[currentType()].colors;$('firstColor').textContent=colors[0]+' · 先手';$('secondColor').textContent=colors[1]+' · 后手';}
 const chatgptConnected=()=>state?.auth.accounts.find(a=>a.id===state.auth.active)?.connected;
 const connected=(provider=state?.settings.provider||'chatgpt')=>provider==='api'?state?.apiConnection?.configured:chatgptConnected();
 const currentProvider=()=>game?.provider||(game?'chatgpt':state?.settings.provider)||'chatgpt';
@@ -18,9 +18,15 @@ function notice(message){$('notice').textContent=message||'';$('notice').hidden=
 async function api(path,data){const r=await fetch('/api/'+path,data===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrf},body:JSON.stringify(data)});const j=await r.json();if(!r.ok)throw new Error(j.error||'请求失败');return j;}
 function updateGame(g){selectedSquare=null;game=g;const i=state.games.findIndex(x=>x.id===g.id);if(i<0)state.games.unshift(g);else state.games[i]=g;replay=g.status==='finished'?g.moves.length:null;suggestion=null;}
 async function run(fn){if(working)return;working=true;notice('');render();try{await fn();}catch(e){notice(e.message);}finally{working=false;render();}}
-function result(g){return g.status==='playing'?'进行中':g.result==='draw'?'和棋':g.winner===g.humanColor?'你赢了':g.provider==='api'?'AI 获胜':'ChatGPT 获胜';}
+function result(g){return g.status==='playing'?'进行中':g.winner===0?'和棋':g.winner===g.humanColor?'你赢了':g.provider==='api'?'AI 获胜':'ChatGPT 获胜';}
 function board(){
-  const xq=currentType()==='xiangqi';$('board').classList.toggle('xiangqi',xq);$('board').setAttribute('aria-label',xq?'中国象棋棋盘':'五子棋棋盘');
+  const type=currentType(),xq=type==='xiangqi';$('board').className='board '+(type==='gomoku'?'':type);$('board').setAttribute('aria-label',types[type].name+'棋盘');$('variantInfo').hidden=true;$('board').style.removeProperty('grid-template-columns');$('board').style.removeProperty('grid-template-rows');
+  if(['go','checkers','jungle'].includes(type)){
+    const g=game||{gameType:type,boardSize:Number($('goSize').value),moves:[]},live=game?.status==='playing'&&!working&&!state.busy&&nextColor()===game.humanColor;
+    const {html,info}=drawVariant({game:g,replay,selected:selectedSquare,suggestion,live,numbers:$('numbers').checked});$('board').innerHTML=html;$('variantInfo').hidden=false;$('variantInfo').textContent=info;
+    if(type==='go'){const n=g.boardSize||9;$('board').style.gridTemplateColumns='repeat('+n+',1fr)';$('board').style.gridTemplateRows='repeat('+n+',1fr)';}
+    if(live&&movingType(type))$('boardStatus').textContent=selectedSquare?'选择标记的落点，或点击另一枚己方棋子':'先选择棋子，再选择落点';return;
+  }
   if(xq){const live=game?.status==='playing'&&!working&&!state.busy&&nextColor()===game.humanColor;const {html,check}=drawXiangqi({game,replay,suggestion,selected:selectedSquare,live});$('board').innerHTML=html;
     if(game?.status==='playing'&&!working&&!state.busy)$('boardStatus').textContent=check?'将军！请走出将军状态':live?(selectedSquare?'选择标记的落点，或点击另一枚己方棋子':'先选择棋子，再选择落点'):'等待 AI 走棋，可点击重试';return;}
 
@@ -43,15 +49,15 @@ function render(){
   const isApi=currentProvider()==='api',isConnected=connected(currentProvider());$('connectionText').textContent=(isApi?'API':'ChatGPT')+(isConnected?' 已连接':' 未连接');$('connectionDot').parentElement.classList.toggle('connected',!!isConnected);
   $('opponentName').textContent=isApi?'AI 对手':'ChatGPT';
   $('playView').hidden=view!=='play';$('historyView').hidden=view!=='history';$('playTab').classList.toggle('active',view==='play');$('historyTab').classList.toggle('active',view==='history');
-  const active=game?.status==='playing',busy=working||state.busy,aiTurn=active&&nextColor()!==game.humanColor,xq=currentType()==='xiangqi';
+  const active=game?.status==='playing',busy=working||state.busy,aiTurn=active&&nextColor()!==game.humanColor,type=currentType(),xq=type==='xiangqi';
   if(game)$('modeSelect').value=typeOf(game);$('modeSelect').disabled=busy||state.games.some(g=>g.status==='playing');colorLabels();
-  $('numbers').parentElement.hidden=xq;
-  $('rulePill').textContent=xq?'中国象棋 · 红先黑后':'五子棋 · 15 × 15';
-  $('ruleNote').textContent=xq?'象棋休闲规则：将死 / 困毙判负；三次重复时单方长将判负，否则和棋，不裁定长捉。':'自由五子棋：五子或以上连线获胜，无禁手。';
+  $('numbers').parentElement.hidden=movingType(type);$('goOptions').hidden=type!=='go';$('goSize').disabled=busy||active;if(game?.gameType==='go')$('goSize').value=String(game.boardSize||9);$('passMove').hidden=type!=='go';$('passMove').disabled=busy||!active||aiTurn;
+  $('rulePill').textContent=types[type].name+(type==='go'?' · '+(game?.boardSize||$('goSize').value)+' 路':type==='checkers'?' · 双人':'' );
+  $('ruleNote').textContent=types[type].rules;
   $('gameTitle').textContent=!game?'准备好，落下第一子':active?(aiTurn?(isApi?'AI':'ChatGPT')+' 正在思考':'轮到你了，落子吧'):result(game);
-  $('boardStatus').textContent=busy?'正在处理，请稍候…':!game?'连接账户后开始对弈':active?aiTurn?'等待 AI 落子，可点击重试':'点击棋盘空位落子':suggestion?'推荐落点已标记 · 显示该手落子前局面':'棋局已结束 · 拖动进度条逐步回看';
+  $('boardStatus').textContent=busy?'正在处理，请稍候…':!game?'连接账户后开始对弈':active?aiTurn?'等待 AI 落子，可点击重试':'点击棋盘空位落子':suggestion?.pass?'建议在此停一手':suggestion?'推荐落点已标记 · 显示该手落子前局面':'棋局已结束 · 拖动进度条逐步回看';
   const color=game?.humanColor||state.settings.humanColor;
-  $('humanStone').className='stone-icon '+(xq?(color===1?'red':'black'):(color===1?'black':'white'));$('humanLabel').textContent=xq?(color===1?'执红 · 先手':'执黑 · 后手'):(color===1?'执黑 · 先手':'执白 · 后手');
+  $('humanStone').className='stone-icon '+(movingType(type)?(color===1?'red':xq?'black':'blue'):(color===1?'black':'white'));$('humanLabel').textContent=types[type].colors[color-1]+' · '+(color===1?'先手':'后手');
   const model=game?.model||state.settings.model;$('modelLabel').textContent=models.find(m=>m.id===model)?.name||model||'在设置中选择模型';
   $('effortLabel').textContent='思考强度：'+(effortLabels[(game?game.reasoningEffort:state.settings.reasoningEffort)||'default']||'模型默认');
   $('humanTurn').classList.toggle('current',!!active&&!aiTurn);$('humanTurn').textContent=active&&!aiTurn?'落子中':'玩家';$('aiTurn').classList.toggle('current',!!aiTurn);$('aiTurn').textContent=aiTurn?'思考中':'AI';
@@ -61,7 +67,7 @@ function render(){
   $('review').disabled=busy||!game||active||!game.moves.length;$('review').textContent=game?.review?'✧ 查看复盘':'✧ 复盘棋局';
   $('retry').hidden=!aiTurn;$('retry').disabled=busy;
   $('moveCount').textContent=(game?.moves.length||0)+' 手';
-  $('moves').innerHTML=game?.moves.length?game.moves.map((m,i)=>`<button class="move-item${replay===i+1?' selected':''}" data-ply="${i+1}" ${active?'disabled':''}><span>${String(i+1).padStart(2,'0')}</span>${xq?(i%2?'黑':'红'):(i%2?'○':'●')} ${moveText(game,m)}</button>`).join(''):'<div class="empty">棋局，从一个落点开始。<small>你的每一步都会被记录。</small></div>';
+  $('moves').innerHTML=game?.moves.length?game.moves.map((m,i)=>`<button class="move-item${replay===i+1?' selected':''}" data-ply="${i+1}" ${active?'disabled':''}><span>${String(i+1).padStart(2,'0')}</span>${types[type].colors[i%2]} ${moveText(game,m)}</button>`).join(''):'<div class="empty">棋局，从一个落点开始。<small>你的每一步都会被记录。</small></div>';
   $('replayBar').hidden=!game||active;$('timeline').max=game?.moves.length||0;$('timeline').value=replay??0;$('stepLabel').textContent=`${replay??0} / ${game?.moves.length||0}`;
   board();renderReview();renderHistory();
 }
@@ -70,7 +76,7 @@ function renderReview(){
   $('reviewPanel').innerHTML=`<span class="eyebrow">REFLECT & GROW</span><h2>${r.firstImprovement?`从第 ${r.firstImprovement} 手，找到更好的选择`:'这一局的收获'}</h2><p>${esc(r.summary)}</p><div class="review-grid">${r.points.map((p,i)=>`<button class="review-point" data-point="${i}"><span>第 ${p.ply} 手 · ${moveText(game,game.moves[p.ply-1])} ${p.betterMove?'；建议 '+moveText(game,p.betterMove):''}</span><b>${esc(p.title)}</b><p>${esc(p.explanation)}</p><span>在棋盘上查看 ↗</span></button>`).join('')}</div><ul class="practice">${r.practice.map(p=>`<li>${esc(p)}</li>`).join('')}</ul><p class="fine">基于完整棋谱的 AI 分析，未使用专业棋力引擎验证；替代着法仅供学习参考。点击卡片查看该手落子前的局面。</p>`;
 }
 function renderHistory(){
-  $('historyList').innerHTML=state.games.length?state.games.map(g=>`<button class="history-card" data-game="${esc(g.id)}"><span>${new Date(g.createdAt).toLocaleString('zh-CN')}</span><h3>${result(g)}</h3><p>${typeName(g)} · ${typeOf(g)==='xiangqi'?(g.humanColor===1?'执红':'执黑'):(g.humanColor===1?'执黑':'执白')} · ${g.moves.length} 手 · ${esc(g.model)}</p><span>${g.review?'已生成复盘 · 查看关键着法':'查看棋谱'} ↗</span></button>`).join(''):'<div class="empty">还没有棋局。开始第一局，让进步有迹可循。</div>';
+  $('historyList').innerHTML=state.games.length?state.games.map(g=>`<button class="history-card" data-game="${esc(g.id)}"><span>${new Date(g.createdAt).toLocaleString('zh-CN')}</span><h3>${result(g)}</h3><p>${typeName(g)} · ${types[typeOf(g)].colors[g.humanColor-1]} · ${g.moves.length} 手 · ${esc(g.model)}</p><span>${g.review?'已生成复盘 · 查看关键着法':'查看棋谱'} ↗</span></button>`).join(''):'<div class="empty">还没有棋局。开始第一局，让进步有迹可循。</div>';
 }
 async function refreshModels(){
   $('settingsMessage').textContent='正在读取当前账户的模型…';
@@ -101,9 +107,11 @@ async function openSettings(){
 }
 async function reload(){const id=game?.id;state=await api('state');selectedSquare=null;game=(id?state.games.find(g=>g.id===id):null)||state.games.find(g=>g.status==='playing')||null;replay=game?.status==='finished'?game.moves.length:null;render();}
 async function aiMove(){const {game:g}=await api('games/ai',{id:game.id});updateGame(g);}
-$('board').addEventListener('click',e=>{const cell=e.target.closest('[data-x]');if(!cell||cell.disabled)return;const x=Number(cell.dataset.x),y=Number(cell.dataset.y);let move={x,y};if(currentType()==='xiangqi'){const s=inspectXiangqi(game.moves);if(colorOf(s.board[y][x])===game.humanColor){selectedSquare=selectedSquare?.x===x&&selectedSquare?.y===y?null:{x,y};board();return;}if(!selectedSquare)return;move={fromX:selectedSquare.x,fromY:selectedSquare.y,x,y};selectedSquare=null;}run(async()=>{const r=await api('games/move',{id:game.id,...move});updateGame(r.game);render();if(game.status==='playing')await aiMove();});});
-$('newGame').onclick=()=>run(async()=>{if(!connected()||!state.settings.model){await openSettings();return;}const r=await api('games/new',{gameType:$('modeSelect').value});updateGame(r.game);view='play';render();if(game.humanColor===2)await aiMove();});
+$('board').addEventListener('click',e=>{const cell=e.target.closest('[data-x]');if(!cell||cell.disabled)return;const x=Number(cell.dataset.x),y=Number(cell.dataset.y);let move={x,y};if(movingType(currentType())){const s=variantState(game);const owner=currentType()==='xiangqi'?colorOf(s.board[y][x]):ownerAt(game,s,x,y);if(owner===game.humanColor){selectedSquare=selectedSquare?.x===x&&selectedSquare?.y===y?null:{x,y};board();return;}if(!selectedSquare)return;move={fromX:selectedSquare.x,fromY:selectedSquare.y,x,y};selectedSquare=null;}run(async()=>{const r=await api('games/move',{id:game.id,...move});updateGame(r.game);render();if(game.status==='playing')await aiMove();});});
+$('newGame').onclick=()=>run(async()=>{if(!connected()||!state.settings.model){await openSettings();return;}const r=await api('games/new',{gameType:$('modeSelect').value,boardSize:Number($('goSize').value)});updateGame(r.game);view='play';render();if(game.humanColor===2)await aiMove();});
 $('retry').onclick=()=>run(aiMove);
+$('goSize').onchange=render;
+$('passMove').onclick=()=>{$('passDialog').showModal();};$('cancelPass').onclick=()=>$('passDialog').close();$('confirmPass').onclick=()=>{$('passDialog').close();run(async()=>{updateGame((await api('games/move',{id:game.id,pass:true})).game);render();if(game.status==='playing')await aiMove();});};
 $('modeSelect').onchange=()=>{if(state.games.some(g=>g.status==='playing'))return;game=null;selectedSquare=null;replay=null;suggestion=null;render();};
 $('resign').onclick=()=>$('confirmDialog').showModal();$('cancelResign').onclick=()=>$('confirmDialog').close();
 $('confirmResign').onclick=()=>{$('confirmDialog').close();run(async()=>updateGame((await api('games/resign',{id:game.id})).game));};

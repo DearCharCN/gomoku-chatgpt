@@ -6,12 +6,12 @@ import { randomBytes,randomUUID } from 'node:crypto';
 import { openStorage } from './lib/storage.mjs';
 import { Auth } from './lib/auth.mjs';
 import { AI } from './lib/ai.mjs';
-import { appendMove,inspectGame,validateGameType } from './lib/games.mjs';
+import { appendMove,inspectGame,validateGameType,gameOptions } from './lib/games.mjs';
 import { createTrace,timingLogger } from './lib/timing.mjs';
 import { applySettings,validateEffort } from './lib/settings.mjs';
 import { APIConnection } from './lib/api-connection.mjs';
 const root=dirname(fileURLToPath(import.meta.url));
-const port=Number(process.env.PORT||3212),origin=`http://127.0.0.1:${port}`;
+const port=Number(process.env.PORT||3213),origin=`http://127.0.0.1:${port}`;
 const dataRoot=process.env.GOMOKU_DATA_DIR||join(root,'.local');
 await mkdir(dataRoot,{recursive:true,mode:0o700});
 // Refuse a second process sharing rotating OAuth credentials and game files.
@@ -37,7 +37,7 @@ function catalogKey(provider){return provider+':'+(provider==='api'?apiConnectio
 async function models(provider=settings.provider,trace){providerName(provider);catalog=await engines[provider].models(trace);catalogAccount=catalogKey(provider);return catalog;}
 async function requireModel(id,trace,provider='chatgpt'){providerName(provider);const cacheHit=catalogAccount===catalogKey(provider)&&!!catalog.length;trace?.mark('model_catalog_check_start',{cacheHit});if(!cacheHit)await models(provider,trace);const model=catalog.find(m=>m.id===id);if(!model)throw new Error('请选择当前连接可用的模型');trace?.mark('model_catalog_ready',{cacheHit});return model;}
 function engineForGame(game){const provider=providerName(game.provider||'chatgpt');if(provider==='api'&&game.connectionId!==apiConnection.record?.id)throw new Error('当前 API 连接与此棋局不一致，请恢复创建该棋局时的 API 地址和协议');return engines[provider];}
-const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/xiangqi.mjs':'xiangqi.mjs','/xiangqi-board.mjs':'xiangqi-board.mjs'};
+const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/xiangqi.mjs':'xiangqi.mjs','/xiangqi-board.mjs':'xiangqi-board.mjs','/go.mjs':'go.mjs','/checkers.mjs':'checkers.mjs','/jungle.mjs':'jungle.mjs','/game-types.mjs':'game-types.mjs','/variant-board.mjs':'variant-board.mjs'};
 const server=http.createServer(async(req,res)=>{
   res.setHeader('X-Gomoku-Studio','1');
   res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
@@ -56,7 +56,7 @@ const server=http.createServer(async(req,res)=>{
       busy=true;try{await auth.callback(url,s.id);catalog=[];catalogAccount=null;settings.model='';await storage.write('settings',settings);}finally{busy=false;}
       res.writeHead(303,{Location:'/?connected=1'});return res.end();
     }
-    if(req.method==='GET'&&url.pathname==='/api/state')return json(res,200,{version:'1.2.0',csrf:s.csrf,auth:auth.status(),apiConnection:apiConnection.status(),settings,games,busy});
+    if(req.method==='GET'&&url.pathname==='/api/state')return json(res,200,{version:'1.3.0',csrf:s.csrf,auth:auth.status(),apiConnection:apiConnection.status(),settings,games,busy});
     if(req.method==='GET'&&url.pathname==='/api/models'){
       if(busy)return json(res,409,{error:'正在处理上一个请求，请稍后刷新模型'});
       busy=true;try{return json(res,200,{models:await models(url.searchParams.get('provider')||settings.provider,trace)});}finally{busy=false;}
@@ -81,7 +81,7 @@ const server=http.createServer(async(req,res)=>{
       if(url.pathname==='/api/games/new'){
         await engines[settings.provider].auth.access(trace);const model=await requireModel(settings.model,trace,settings.provider);validateEffort(model,settings.reasoningEffort);
         if(games.some(g=>g.status==='playing'))throw new Error('请先完成或认输当前棋局');
-        const game={gameType:validateGameType(b.gameType||settings.gameType),id:randomUUID(),createdAt:new Date().toISOString(),humanColor:settings.humanColor,provider:settings.provider,...(settings.provider==='api'?{connectionId:apiConnection.record.id}:{}),model:settings.model,reasoningEffort:settings.reasoningEffort,moves:[],status:'playing',winner:0,review:null};games.unshift(game);await persist();trace?.mark('game_saved',{gameId:game.id});return json(res,200,{game});
+        const game={gameType:validateGameType(b.gameType||settings.gameType),...gameOptions(b.gameType||settings.gameType,b),id:randomUUID(),createdAt:new Date().toISOString(),humanColor:settings.humanColor,provider:settings.provider,...(settings.provider==='api'?{connectionId:apiConnection.record.id}:{}),model:settings.model,reasoningEffort:settings.reasoningEffort,moves:[],status:'playing',winner:0,review:null};games.unshift(game);await persist();trace?.mark('game_saved',{gameId:game.id});return json(res,200,{game});
       }
       const game=games.find(g=>g.id===b.id);if(!game)throw new Error('棋局不存在');
       trace?.mark('game_loaded',{gameId:game.id,gameType:game.gameType||'gomoku',model:game.model,provider:game.provider||'chatgpt',reasoningEffort:game.reasoningEffort||'default',ply:game.moves.length+1});
