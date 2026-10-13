@@ -2,7 +2,7 @@ param([switch]$NoBrowser)
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
 $dataRoot = if ($env:GOMOKU_DATA_DIR) { [IO.Path]::GetFullPath($env:GOMOKU_DATA_DIR) } else { Join-Path $projectRoot '.local' }
-$port = if ($env:PORT) { [int]$env:PORT } else { 3211 }
+$port = if ($env:PORT) { [int]$env:PORT } else { 3212 }
 if ($port -lt 1 -or $port -gt 65535) { throw 'PORT must be between 1 and 65535.' }
 $url = "http://127.0.0.1:$port"
 $hash = [Security.Cryptography.SHA256]::Create()
