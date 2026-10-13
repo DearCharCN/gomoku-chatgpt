@@ -1,0 +1,5 @@
+{
+  "name": "gomoku-chatgpt", "version": "1.1.0", "private": true, "type": "module",
+  "scripts": { "start": "node server.mjs", "test": "node --test test/*.test.mjs", "timings": "node scripts/timings.mjs" },
+  "engines": { "node": ">=22" }, "dependencies": { "jose": "^6.1.0" }
+}
