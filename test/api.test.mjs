@@ -28,7 +28,7 @@ test('API 完整集成：获取模型、两种协议、强度、落子、复盘�
   let raw='';for await(const c of req)raw+=c;const b=JSON.parse(raw);requests.push({url:req.url,...b});
   const review=(b.instructions||b.messages?.[0]?.content||'').includes('教练');
   const context=JSON.parse((b.input?.[0]?.content||b.messages?.[1]?.content).split('\n')[0]);
-  const text=JSON.stringify(review?{summary:'模拟复盘',firstImprovement:null,points:[],practice:['练习防守']}:(context.gameType==='xiangqi'?context.legalMoves[0]:{x:7,y:7}));
+  const text=JSON.stringify(review?{summary:'模拟复盘',firstImprovement:null,points:[],practice:['练习防守']}:(context.legalMoves?context.legalMoves[0]:{x:7,y:7}));
   res.setHeader('Content-Type','text/event-stream');res.flushHeaders();
   if(req.url==='/v1/chat/completions')res.write('data: '+JSON.stringify({choices:[{delta:{content:text},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');
   else res.write('data: '+JSON.stringify({type:'response.output_text.delta',delta:text})+'\n\ndata: '+JSON.stringify({type:'response.completed',response:{status:'completed'}})+'\n\n');
@@ -42,10 +42,10 @@ test('API 完整集成：获取模型、两种协议、强度、落子、复盘�
   const page=await fetch(origin),cookie=page.headers.get('set-cookie').split(';')[0];assert.ok(cookie.startsWith('gomoku_33220='));
   const getState=()=>fetch(origin+'/api/state',{headers:{Cookie:cookie}}).then(r=>r.json());const s=await getState();
   const post=async(path,data)=>{const r=await fetch(origin+'/api/'+path,{method:'POST',headers:{Cookie:cookie,Origin:origin,'X-CSRF-Token':s.csrf,'Content-Type':'application/json'},body:JSON.stringify(data)});const result=await r.json();assert.equal(r.status,200,JSON.stringify(result));return result;};
-  for(const protocol of ['chat','responses'])for(const gameType of ['gomoku','xiangqi']){
+  for(const protocol of ['chat','responses'])for(const gameType of ['gomoku','xiangqi','go','checkers','jungle']){
    const connect=await post('api/connect',{baseUrl,token:'TEST_ONLY_TOKEN',protocol});assert.equal(connect.models[0].id,'test-model');assert.ok(!JSON.stringify(connect).includes('TEST_ONLY_TOKEN'));
    await post('settings',{provider:'api',model:'test-model',reasoningEffort:'low',humanColor:2,gameType});
-   let {game}=await post('games/new',{});assert.equal(game.provider,'api');assert.equal(game.gameType,gameType);
+   let {game}=await post('games/new',{boardSize:protocol==='responses'?19:9});assert.equal(game.provider,'api');assert.equal(game.gameType,gameType);if(gameType==='go')assert.equal(game.boardSize,protocol==='responses'?19:9);
    ({game}=await post('games/ai',{id:game.id}));assert.equal(game.moves.length,1);
    await post('settings',{provider:'api',model:'test-model',reasoningEffort:'high',humanColor:2,applyToCurrent:true});
    await post('games/resign',{id:game.id});({game}=await post('games/review',{id:game.id}));assert.equal(game.review.summary,'模拟复盘');
